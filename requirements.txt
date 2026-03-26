@@ -1,0 +1,9 @@
+beautifulsoup4
+google-genai
+pandas
+pydantic
+python-dotenv
+PyMuPDF
+requests
+streamlit
+urllib3
