@@ -1,9 +1,12 @@
 beautifulsoup4
 google-genai
+json-repair
+openai
 pandas
 pydantic
 python-dotenv
 PyMuPDF
+pyyaml
 requests
 streamlit
 urllib3

@@ -1,8 +1,11 @@
 import os
 import glob
 import traceback
+from collections import defaultdict
 
 import fitz  # PyMuPDF
+
+from period_utils import select_recent_period_items
 
 
 def extract_transcript_text(pdf_path: str) -> str:
@@ -26,7 +29,30 @@ def extract_transcript_text(pdf_path: str) -> str:
         return ""
 
 
-def extract_all_transcripts(output_root: str = None, tickers: list[str] = None) -> dict:
+def _select_pdf_paths(pdf_paths: list[str], recent_quarters: int | None) -> list[str]:
+    """Select the most recent N transcript PDFs per ticker. None means all."""
+    grouped_paths = defaultdict(list)
+
+    for pdf_path in pdf_paths:
+        period = os.path.basename(os.path.dirname(pdf_path))
+        ticker = os.path.basename(os.path.dirname(os.path.dirname(pdf_path)))
+        grouped_paths[ticker].append((period, pdf_path))
+
+    selected_paths = []
+    for ticker in sorted(grouped_paths):
+        selected_paths.extend(
+            pdf_path
+            for _, pdf_path in select_recent_period_items(grouped_paths[ticker], recent_quarters)
+        )
+
+    return selected_paths
+
+
+def extract_all_transcripts(
+    output_root: str = None,
+    tickers: list[str] = None,
+    recent_quarters: int | None = 1,
+) -> dict:
     """
     Batch-extract all Transcript.pdf -> Transcript.txt under output_root.
     Skips PDFs that already have a Transcript.txt sibling.
@@ -47,7 +73,7 @@ def extract_all_transcripts(output_root: str = None, tickers: list[str] = None) 
         pattern = os.path.join(output_root, "*", "*", "Transcript.pdf")
         pdf_paths = glob.glob(pattern)
 
-    for pdf_path in pdf_paths:
+    for pdf_path in _select_pdf_paths(pdf_paths, recent_quarters):
         txt_path = pdf_path.replace("Transcript.pdf", "Transcript.txt")
 
         if os.path.exists(txt_path):

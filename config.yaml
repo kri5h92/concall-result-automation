@@ -1,0 +1,34 @@
+# ============================================================
+# Concall Result Automation — Configuration
+# ============================================================
+# All settings here are defaults. CLI args override these values.
+
+# Tickers to process. Leave empty to use all tickers from tickers.csv.
+tickers:
+  # - ANANDRATHI
+  # - CEINSYS
+  # - SALZERELEC
+
+# LLM models used for analysis. Every transcript is analyzed by ALL models.
+# Use "provider/model" format for OpenRouter, or plain name for direct Gemini.
+models:
+  # - google/gemini-2.5-flash
+  - anthropic/claude-4.6-opus
+
+# Pipeline phase to run: download | extract | analyze | all
+phase: all
+
+# If true, process all historical quarters.
+all_quarters: false
+
+# If all_quarters is false, process only the most recent N concalls per ticker.
+recent_quarters: 2
+
+# Watch mode: continuously poll for new transcripts instead of a single run.
+watch: false
+
+# Seconds between polls in watch mode.
+poll_interval: 30
+
+# Seconds to wait between consecutive LLM API calls (rate-limit safety).
+api_delay: 2.0

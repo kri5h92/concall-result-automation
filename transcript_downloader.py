@@ -5,6 +5,8 @@ from bs4 import BeautifulSoup
 import urllib3
 from datetime import datetime
 
+from period_utils import select_recent_period_items
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # -----------------------------------
@@ -94,7 +96,7 @@ def download_file(ticker, url, filepath):
 # SCRAPER
 # -----------------------------------
 
-def scrape_ticker(ticker):
+def scrape_ticker(ticker, recent_quarters: int | None = 1):
 
     print("\nProcessing:", ticker)
 
@@ -139,6 +141,8 @@ def scrape_ticker(ticker):
         return
 
     rows = concalls_section.select("ul.list-links li")
+    transcript_rows = []
+    search_limit = recent_quarters if recent_quarters is not None else None
 
     for row in rows:
 
@@ -155,25 +159,23 @@ def scrape_ticker(ticker):
 
             if not transcript_link:
 
-                print(date_text, "-> No transcript")
-
-                write_log(
-                    ticker,
-                    "errors",
-                    f"{date_text} | Transcript not available"
-                )
+                # Screener lists concalls newest-first. Only log missing transcripts
+                # while they can still affect the recent-N selection.
+                if search_limit is None or len(transcript_rows) < search_limit:
+                    print(date_text, "-> No transcript")
+                    write_log(
+                        ticker,
+                        "errors",
+                        f"{date_text} | Transcript not available"
+                    )
 
                 continue
 
             pdf_url = transcript_link.get("href")
+            transcript_rows.append((date_text, pdf_url))
 
-            folder = os.path.join(output_root, ticker, date_text)
-
-            os.makedirs(folder, exist_ok=True)
-
-            filepath = os.path.join(folder, "Transcript.pdf")
-
-            download_file(ticker, pdf_url, filepath)
+            if search_limit is not None and len(transcript_rows) >= search_limit:
+                break
 
         except Exception as e:
 
@@ -182,6 +184,26 @@ def scrape_ticker(ticker):
                 "errors",
                 f"Parsing error | {ticker} | Error: {str(e)}"
             )
+
+    selected_rows = select_recent_period_items(transcript_rows, recent_quarters)
+
+    if recent_quarters is not None and len(selected_rows) < recent_quarters:
+        message = (
+            f"Only {len(selected_rows)} transcript(s) available on Screener; "
+            f"requested {recent_quarters}"
+        )
+        print(message)
+        write_log(ticker, "success", message)
+
+    for date_text, pdf_url in selected_rows:
+
+        folder = os.path.join(output_root, ticker, date_text)
+
+        os.makedirs(folder, exist_ok=True)
+
+        filepath = os.path.join(folder, "Transcript.pdf")
+
+        download_file(ticker, pdf_url, filepath)
 
 
 # -----------------------------------
@@ -205,7 +227,7 @@ def load_tickers(csv_path: str = None) -> list[str]:
     return tickers
 
 
-def run_downloader(tickers: list[str] = None):
+def run_downloader(tickers: list[str] = None, recent_quarters: int | None = 1):
     """Download transcripts for given tickers. If None, loads from tickers.csv."""
     if tickers is None:
         tickers = load_tickers()
@@ -213,7 +235,7 @@ def run_downloader(tickers: list[str] = None):
         print("No tickers to process.")
         return
     for ticker in tickers:
-        scrape_ticker(ticker)
+        scrape_ticker(ticker, recent_quarters=recent_quarters)
 
 
 # -----------------------------------
