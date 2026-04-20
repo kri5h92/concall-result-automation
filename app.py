@@ -141,6 +141,7 @@ def _canonical_company_name(ticker: str, data: dict, meta: dict) -> str:
 
 
 def _analysis_file_sort_key(path: str) -> tuple[float, str]:
+    """Sort analysis files by modification time with filename as a tie-breaker."""
     try:
         mtime = os.path.getmtime(path)
     except OSError:
@@ -169,8 +170,12 @@ def load_ticker_metadata(csv_path: str) -> dict[str, dict]:
 
 def load_all_analyses(output_root: str, ticker_meta: dict[str, dict]) -> pd.DataFrame:
     """
-    Walk Outputs/Concalls/ and load all analysis_*.json files into a DataFrame.
-    Also loads legacy analysis.json files.
+    Walk Outputs/Concalls/ and load one analysis JSON per ticker period.
+
+    Period folders may contain multiple analysis_<model>.json files. The viewer
+    intentionally hides model details, so the newest valid JSON file is used for
+    each period. Legacy analysis.json files are also supported.
+
     Merges sector/sub_sector from ticker metadata.
     """
     records = []
@@ -721,6 +726,7 @@ def _parse_period_date(period_str: str):
 
 
 def _period_quarter_info(period_str: str):
+    """Return (quarter, fiscal_year) for period labels using Indian FY buckets."""
     dt = _parse_period_date(period_str)
     if dt is None:
         return None
@@ -736,6 +742,7 @@ def _period_quarter_info(period_str: str):
 
 
 def _period_quarter_label(period_str: str) -> str:
+    """Format a period folder name as a dashboard quarter label, e.g. Q3 FY26."""
     info = _period_quarter_info(period_str)
     if info is None:
         return _clean_text(period_str) or "Unknown Quarter"
@@ -745,6 +752,7 @@ def _period_quarter_label(period_str: str) -> str:
 
 
 def _period_quarter_sort(period_str: str) -> int:
+    """Return a sortable fiscal-quarter key where larger values are newer."""
     info = _period_quarter_info(period_str)
     if info is None:
         return 0
@@ -754,6 +762,7 @@ def _period_quarter_sort(period_str: str) -> int:
 
 
 def _sorted_quarter_labels(df: pd.DataFrame) -> list[str]:
+    """Return unique dashboard quarter labels sorted newest first."""
     if df.empty:
         return []
 
@@ -766,6 +775,12 @@ def _sorted_quarter_labels(df: pd.DataFrame) -> list[str]:
 
 
 def _collapse_quarter_records(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Keep one row per ticker and fiscal quarter for model-free dashboard views.
+
+    If multiple calendar months or analysis files map to the same displayed
+    quarter, the most recent period and newest analysis file wins.
+    """
     if df.empty:
         return df
 

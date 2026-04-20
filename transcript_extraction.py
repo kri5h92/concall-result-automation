@@ -1,3 +1,16 @@
+"""
+Extract text from downloaded transcript PDFs.
+
+Input files are expected at:
+    Outputs/Concalls/<TICKER>/<Mon YYYY>/Transcript.pdf
+
+Output files are written next to the PDF as:
+    Outputs/Concalls/<TICKER>/<Mon YYYY>/Transcript.txt
+
+The extraction stage is idempotent and skips PDFs that already have a text
+file. The analyzer consumes the text files produced here.
+"""
+
 import os
 import glob
 import traceback
@@ -10,7 +23,10 @@ from period_utils import select_recent_period_items
 
 def extract_transcript_text(pdf_path: str) -> str:
     """
-    Extracts all text from a given PDF transcript.
+    Extract all text from a transcript PDF.
+
+    Page boundaries are preserved with a visible delimiter so raw extraction
+    issues are easier to inspect when LLM output looks suspicious.
     """
     text_content = []
 
@@ -55,6 +71,7 @@ def extract_all_transcripts(
 ) -> dict:
     """
     Batch-extract all Transcript.pdf -> Transcript.txt under output_root.
+
     Skips PDFs that already have a Transcript.txt sibling.
     Returns dict with counts: {'extracted': N, 'skipped': N, 'failed': N}
     """

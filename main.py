@@ -45,7 +45,12 @@ _CONFIG_DEFAULTS = {
 
 
 def load_config(path: str = None) -> dict:
-    """Load config.yaml and merge with defaults. Missing keys fall back to defaults."""
+    """
+    Load YAML configuration and merge it with supported defaults.
+
+    Unknown keys are ignored so older config files can coexist with newer code.
+    CLI overrides are applied by main() after this function returns.
+    """
     if path is None:
         path = os.path.join(os.getcwd(), "config.yaml")
     cfg = dict(_CONFIG_DEFAULTS)
@@ -63,6 +68,7 @@ def load_config(path: str = None) -> dict:
 def load_ticker_info(csv_path: str = None) -> dict[str, dict]:
     """
     Load full ticker metadata from tickers.csv.
+
     Returns dict: {ticker: {company_name, sector, sub_sector}}
     """
     if csv_path is None:
@@ -91,7 +97,12 @@ def load_ticker_info(csv_path: str = None) -> dict[str, dict]:
 # -----------------------------------
 
 def _resolve_recent_quarters(cfg: dict) -> int | None:
-    """Resolve quarter scope from config. None means process all available periods."""
+    """
+    Resolve the configured period scope.
+
+    Returns None when all historical periods should be processed; otherwise
+    returns a normalized positive integer.
+    """
     if cfg.get("all_quarters"):
         return None
     return normalize_recent_quarters(cfg.get("recent_quarters", 1))
@@ -120,10 +131,12 @@ def watch_mode(
     delay: float = 2.0,
 ):
     """
-    Continuously poll for new transcripts. On each poll:
-      1. Download + extract for the configured recent scope
-      2. Detect any Transcript.txt files that are new since last poll
-      3. Immediately analyze only those new files with ALL configured models
+    Continuously poll for new transcripts and analyze newly discovered files.
+
+    On each poll:
+    1. Download and extract for the configured recent scope.
+    2. Detect Transcript.txt files that are new since the previous poll.
+    3. Analyze only those new files with all configured models.
     """
     log = logging.getLogger(__name__)
     default_model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
@@ -196,6 +209,7 @@ def watch_mode(
 # -----------------------------------
 
 def main():
+    """CLI entry point for one-shot and watch-mode pipeline runs."""
     parser = argparse.ArgumentParser(
         description="Concall Result Automation Pipeline"
     )

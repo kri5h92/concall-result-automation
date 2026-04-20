@@ -11,7 +11,7 @@ if exist ".venv\Scripts\activate.bat" (
 )
 
 echo.
-echo  Starting watch mode — config from config.yaml
+echo  Starting watch mode - config from config.yaml
 echo  Press Ctrl+C to stop.
 echo.
 

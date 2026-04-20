@@ -1,6 +1,17 @@
 # Concall Result Automation
 
-An automated pipeline to download, extract, and analyze earnings call transcripts for Indian listed companies using Google Gemini AI. Includes a Streamlit dashboard for interactive exploration of results.
+An automated pipeline to download, extract, and analyze earnings call transcripts for Indian listed companies using Gemini or OpenRouter-hosted LLMs. Includes a Streamlit dashboard for interactive exploration of saved results.
+
+For a module-by-module overview, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Current Behavior
+
+- Pipeline stages are idempotent: existing PDFs, extracted text files, and analysis JSON files are skipped.
+- `config.yaml` is the default runtime configuration; CLI flags override it for one run.
+- Gemini models use `GEMINI_API_KEY`; OpenRouter models use `OPENROUTER_API_KEY` and `provider/model` names.
+- The dashboard is read-only. It loads saved analysis JSON files and does not call the LLM.
+- The dashboard groups calendar months into fiscal quarters: Apr-Jun = Q4, Jul-Sep = Q1, Oct-Dec = Q2, Jan-Mar = Q3.
+- The dashboard no longer exposes model filters or model-comparison views; if several analysis files exist for a period, the newest valid JSON is displayed.
 
 ---
 
@@ -8,10 +19,10 @@ An automated pipeline to download, extract, and analyze earnings call transcript
 
 - **Automated download** of earnings transcripts from Screener.in (sourced from BSE filings)
 - **PDF to text extraction** using PyMuPDF
-- **AI-powered analysis** using Google Gemini — extracts 9 structured sections per transcript (financial guidance, growth drivers, red flags, analyst take, and more)
-- **Multi-model support** — run different Gemini models on the same transcript and compare outputs side-by-side
+- **AI-powered analysis** using Gemini or OpenRouter-hosted models - extracts 9 structured sections per transcript (financial guidance, growth drivers, red flags, analyst take, and more)
+- **Multi-model support** - run one or more configured models on the same transcript; outputs are stored separately on disk
 - **Incremental / idempotent** — re-running skips already-processed files; no duplicate API calls
-- **Streamlit dashboard** — filter by sector, sub-sector, company, quarter, and model; auto-adapts view for multi-quarter or multi-company comparisons
+- **Streamlit dashboard** - filter by date range, company, and fiscal quarter; auto-adapts view for multi-quarter or multi-company comparisons
 
 ---
 
@@ -112,21 +123,21 @@ python main.py --phase extract     # Convert PDFs to TXT only
 python main.py --phase analyze     # Run Gemini analysis only
 ```
 
-### Analyze all historical quarters (not just latest)
+### Analyze all historical periods
 
-By default, only the **latest quarter** per company is analyzed. Use `--all-quarters` to process everything:
+By default, the number of recent concalls comes from `recent_quarters` in `config.yaml`. Use `--all-quarters` to process everything:
 
 ```bash
 python main.py --all-quarters
 ```
 
-### Use a different Gemini model
+### Use different models
 
 ```bash
-python main.py --model gemini-2.0-flash
+python main.py --models gemini-2.0-flash,google/gemini-2.5-flash
 ```
 
-This creates a separate `analysis_gemini-2.0-flash.json` alongside any existing model outputs — perfect for comparing model quality.
+Each model creates a separate `analysis_<model>.json` file unless `model_output_aliases` maps it to an existing output name.
 
 ### CLI reference
 
@@ -135,8 +146,11 @@ This creates a separate `analysis_gemini-2.0-flash.json` alongside any existing 
 | `--tickers` | all from `tickers.csv` | Comma-separated tickers to process |
 | `--phase` | `all` | `download`, `extract`, `analyze`, or `all` |
 | `--all-quarters` | off | Analyze all quarters, not just latest |
-| `--model` | `GEMINI_MODEL` env var | Gemini model name to use |
-| `--concurrency-delay` | `2.0` | Seconds between Gemini API calls |
+| `--recent-quarters` | config value | Number of most recent concalls per ticker when `--all-quarters` is not used |
+| `--models` | config or `GEMINI_MODEL` | Comma-separated model names |
+| `--watch` | off | Poll continuously for new transcripts |
+| `--poll-interval` | config value | Seconds between watch-mode polls |
+| `--concurrency-delay` | config value | Seconds used to stagger LLM calls |
 
 ---
 
@@ -167,16 +181,22 @@ streamlit run app.py
 ```
 
 ### Sidebar filters
-- **Sector** → **Sub-Sector** → **Company** → **Quarter** → **Model**
+- **Date range** -> **Company** -> **Quarter**
+
+The date range matches companies that have at least one concall month
+overlapping the selected range. Once a company matches, all available quarters
+for that company remain visible.
+
+Quarter labels use the dashboard fiscal mapping: Apr-Jun = Q4, Jul-Sep = Q1,
+Oct-Dec = Q2, and Jan-Mar = Q3.
 
 ### View modes (auto-detected from selection)
 
 | Selection | View |
 |---|---|
-| 1 company + 1 quarter + multiple models | **Model comparison** — side-by-side columns per model |
 | 1 company + multiple quarters | **Quarter comparison** — side-by-side columns per quarter |
 | Multiple companies + 1 quarter | **Company comparison** — one expander per company |
-| Everything else | **Flat list** — one expander per company + quarter + model |
+| Everything else | **Flat list** — one expander per company + quarter |
 
 Click **🔄 Refresh Data** in the sidebar to pick up new analysis files without restarting.
 
@@ -188,9 +208,9 @@ The pipeline is designed to scale from 2 to 2000 companies:
 
 - **Tickers** are driven entirely by `tickers.csv` — add rows to scale up
 - **Idempotency** — every phase skips already-processed files; safe to re-run at any time (e.g. as a nightly cron job)
-- **Rate limiting** — `--concurrency-delay` controls the pause between Gemini calls; increase for free tier, decrease for paid
-- **Multi-model storage** — each model's output is a separate file; the Streamlit app merges them automatically
-- **Latest-only default** — by default only the newest transcript per company is analyzed, keeping API usage minimal
+- **Rate limiting** — `--concurrency-delay` controls request staggering; increase it if providers return rate-limit errors
+- **Multi-model storage** — each model's output is a separate file; the Streamlit app displays the newest valid result for each period
+- **Recent-period default** — by default the configured `recent_quarters` limits API usage
 
 ---
 

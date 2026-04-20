@@ -1,3 +1,14 @@
+"""
+Download earnings call transcript PDFs from Screener.in.
+
+The downloader is intentionally file-system driven: each ticker gets a folder
+under Outputs/Concalls, and each concall period gets a child folder named like
+"Feb 2026". Later pipeline stages rely on that deterministic layout.
+
+This module does not parse PDFs or call the LLM. It only discovers transcript
+links and saves Transcript.pdf files when they are not already present.
+"""
+
 import os
 import csv
 import requests
@@ -38,6 +49,7 @@ os.makedirs(log_root, exist_ok=True)
 # -----------------------------------
 
 def write_log(ticker, log_type, message):
+    """Append a ticker-specific downloader log entry under Logs/Concall/."""
 
     ticker_log_dir = os.path.join(log_root, ticker)
 
@@ -54,6 +66,7 @@ def write_log(ticker, log_type, message):
 # -----------------------------------
 
 def download_file(ticker, url, filepath):
+    """Download one PDF unless the target file already exists."""
 
     try:
 
@@ -98,6 +111,14 @@ def download_file(ticker, url, filepath):
 # -----------------------------------
 
 def scrape_ticker(ticker, recent_quarters: int | None = 1):
+    """
+    Scrape one Screener.in ticker page and download selected transcripts.
+
+    Args:
+        ticker: Screener/NSE ticker symbol.
+        recent_quarters: Number of most recent transcript periods to download.
+            None means download every transcript link found on the page.
+    """
 
     print("\nProcessing:", ticker)
 
@@ -229,7 +250,12 @@ def load_tickers(csv_path: str = None) -> list[str]:
 
 
 def run_downloader(tickers: list[str] = None, recent_quarters: int | None = 1):
-    """Download transcripts for given tickers. If None, loads from tickers.csv."""
+    """
+    Download transcripts for a ticker list.
+
+    If tickers is None, symbols are loaded from tickers.csv. A short delay is
+    kept between tickers to avoid hammering Screener.in.
+    """
     if tickers is None:
         tickers = load_tickers()
     if not tickers:

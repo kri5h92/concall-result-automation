@@ -9,14 +9,17 @@ tickers:
   # - CEINSYS
   # - SALZERELEC
 
-# LLM models used for analysis. Every transcript is analyzed by ALL models.
-# Use "provider/model" format for OpenRouter, or plain name for direct Gemini.
+# LLM models used for analysis. Every pending transcript is analyzed by every
+# model listed here. Use "provider/model" format for OpenRouter, or a plain
+# Gemini model name for the direct Gemini client.
 models:
   # - google/gemini-2.5-flash
   - anthropic/claude-4.7-opus
 
-# Treat compatible model versions as the same result set on disk.
-# This calls Opus 4.7, but reuses/skips existing Opus 4.6 analysis files.
+# Treat compatible model versions as the same result set on disk. The key is
+# the model to call; the value is the model name used for output filenames and
+# idempotency checks. This example calls Opus 4.7 but reuses/skips existing
+# Opus 4.6 analysis files.
 model_output_aliases:
   anthropic/claude-4.7-opus: anthropic/claude-4.6-opus
 
@@ -27,6 +30,7 @@ phase: all
 all_quarters: false
 
 # If all_quarters is false, process only the most recent N concalls per ticker.
+# This limit is applied consistently by download, extraction, and analysis.
 recent_quarters: 2
 
 # Watch mode: continuously poll for new transcripts instead of a single run.

@@ -1,9 +1,26 @@
+"""
+LLM analysis stage for extracted earnings call transcripts.
+
+The analyzer reads Transcript.txt files, sends each transcript to either Gemini
+or OpenRouter, validates the response against a strict Pydantic schema, and
+writes analysis_<model-slug>.json next to the transcript.
+
+Important behavior:
+- Existing analysis JSON files are treated as complete and skipped.
+- OpenRouter is selected when the model name contains a provider prefix
+  ("provider/model"); otherwise the direct Gemini client is used.
+- JSON responses are repaired when possible, then validated before saving.
+- Batch mode uses a thread pool; each worker lazily creates its own API client.
+"""
+
 import os
 import json
 import glob
 import time
 import asyncio
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +30,8 @@ LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def configure_logging(level: int = logging.INFO, log_dir: str = None) -> None:
-    """Configure console + rotating file logging.
+    """
+    Configure console and rotating file logging for pipeline runs.
 
     Args:
         level: Logging level (default INFO).
@@ -51,6 +69,7 @@ def configure_logging(level: int = logging.INFO, log_dir: str = None) -> None:
 
 
 def _add_file_handler(root: logging.Logger, log_file: str, level: int) -> None:
+    """Attach a rotating file handler unless the caller already configured one."""
     from logging.handlers import RotatingFileHandler
     fh = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8")
     fh.setLevel(level)
@@ -75,6 +94,8 @@ from pydantic import BaseModel, Field
 # -----------------------------------
 
 class AnalystTake(BaseModel):
+    """Fact-bound investment framing derived from the extracted transcript data."""
+
     bull_case: str = Field(description="Bull case derived ONLY from extracted facts.")
     bear_case: str = Field(description="Bear case derived ONLY from extracted facts.")
     monitorables: str = Field(description="Key things to monitor going forward.")
@@ -256,6 +277,7 @@ def analyze_transcript(
 ) -> dict | None:
     """
     Analyze a single transcript text file using the configured LLM provider.
+
     Returns the parsed analysis dict, or None on failure.
     Saves analysis_{model_slug}.json alongside the transcript. output_model_name
     can key compatible model versions under the same output file.
@@ -419,7 +441,12 @@ def _strip_json_fences(text: str) -> str:
 
 
 def _call_openrouter(client, model_name: str, user_prompt: str) -> str:
-    """Call OpenRouter API with reasoning enabled and return raw JSON string."""
+    """
+    Call OpenRouter API with reasoning enabled and return the raw JSON string.
+
+    The schema is included in the system message because OpenRouter routes to
+    multiple providers with different levels of native structured-output support.
+    """
     logger.debug("[OpenRouter] REQUEST model=%s prompt_len=%d", model_name, len(user_prompt))
     schema_json = json.dumps(TranscriptAnalysis.model_json_schema(), indent=2)
     system_with_schema = (
@@ -450,7 +477,7 @@ def _call_openrouter(client, model_name: str, user_prompt: str) -> str:
 
 
 def _load_existing(json_path: str) -> dict | None:
-    """Load an existing analysis.json file."""
+    """Load an existing analysis JSON file for idempotent re-runs."""
     try:
         with open(json_path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -465,10 +492,11 @@ def analyze_batch(
     recent_quarters: int | None = 1,
     model_name: str = None,
     output_model_name: str = None,
-    delay: float = 2.0,
+    delay: float = 0.0,
+    max_workers: int = 6,
 ) -> dict:
     """
-    Batch-analyze transcripts. Synchronous with a delay between calls for rate-limit safety.
+    Batch-analyze transcripts in parallel using a thread pool.
 
     Args:
         output_root: Root path to Outputs/Concalls/
@@ -479,7 +507,10 @@ def analyze_batch(
         model_name: Model to call.
         output_model_name: Model name used for result filenames/idempotency.
             Use this when a newer compatible model should reuse older outputs.
-        delay: Seconds to wait between API calls.
+        delay: Optional seconds to sleep at the start of each worker call to stagger
+            the initial request burst. Set to 0 (default) to disable; the exponential
+            backoff in analyze_transcript handles rate-limit responses automatically.
+        max_workers: Number of concurrent threads. Reduce if hitting API rate limits.
 
     Returns:
         Dict with counts: {'analyzed': N, 'skipped': N, 'failed': N}
@@ -490,12 +521,12 @@ def analyze_batch(
         ticker_info = {}
 
     stats = {"analyzed": 0, "skipped": 0, "failed": 0}
+    stats_lock = threading.Lock()
 
     # Resolve model name first (needed for provider detection and idempotency check)
     resolved_model = model_name or os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
     resolved_output_model = output_model_name or resolved_model
     resolved_slug = _model_to_slug(resolved_output_model)
-    client = None
 
     # Discover all txt files to process
     txt_files = _discover_txt_files(output_root, tickers, recent_quarters=recent_quarters)
@@ -504,46 +535,71 @@ def analyze_batch(
         logger.warning("No transcript text files found to analyze.")
         return stats
 
-    if resolved_output_model != resolved_model:
-        logger.info(
-            "Analyzing %d transcript(s) with [%s] (results keyed as [%s])...",
-            len(txt_files), resolved_model, resolved_output_model,
-        )
-    else:
-        logger.info("Analyzing %d transcript(s) with [%s]...", len(txt_files), resolved_model)
-
-    for i, (ticker, period, txt_path) in enumerate(txt_files):
+    # Pre-filter: separate already-analyzed (skipped) from pending
+    to_process = []
+    for ticker, period, txt_path in txt_files:
         json_path = os.path.join(os.path.dirname(txt_path), f"analysis_{resolved_slug}.json")
-
         if os.path.exists(json_path):
             stats["skipped"] += 1
             logger.debug(
-                "[%d/%d] Skipping %s/%s — already analyzed by %s",
-                i + 1, len(txt_files), ticker, period, resolved_output_model,
+                "Skipping %s/%s — already analyzed by %s",
+                ticker, period, resolved_output_model,
             )
-            continue
+        else:
+            to_process.append((ticker, period, txt_path))
 
-        company_name = ticker_info.get(ticker, ticker)
-        if client is None:
-            client = _get_client(resolved_model)
+    if not to_process:
+        logger.info("All %d transcript(s) already analyzed.", stats["skipped"])
+        return stats
 
-        result = analyze_transcript(
-            txt_path=txt_path,
-            ticker=ticker,
-            company_name=company_name,
-            model_name=resolved_model,
-            output_model_name=resolved_output_model,
-            client=client,
+    if resolved_output_model != resolved_model:
+        logger.info(
+            "Analyzing %d transcript(s) with [%s] (results keyed as [%s]) — %d worker(s)...",
+            len(to_process), resolved_model, resolved_output_model, max_workers,
+        )
+    else:
+        logger.info(
+            "Analyzing %d transcript(s) with [%s] — %d worker(s)...",
+            len(to_process), resolved_model, max_workers,
         )
 
-        if result is not None:
-            stats["analyzed"] += 1
-        else:
-            stats["failed"] += 1
+    # Thread-local storage: each worker thread creates its own API client on first use
+    _tls = threading.local()
 
-        # Rate-limit delay between API calls (skip after last file)
-        if i < len(txt_files) - 1:
+    def _get_thread_client():
+        if not hasattr(_tls, "client"):
+            _tls.client = _get_client(resolved_model)
+        return _tls.client
+
+    def _worker(ticker: str, period: str, txt_path: str) -> dict | None:
+        if delay > 0:
             time.sleep(delay)
+        return analyze_transcript(
+            txt_path=txt_path,
+            ticker=ticker,
+            company_name=ticker_info.get(ticker, ticker),
+            model_name=resolved_model,
+            output_model_name=resolved_output_model,
+            client=_get_thread_client(),
+        )
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_key = {
+            executor.submit(_worker, ticker, period, txt_path): (ticker, period)
+            for ticker, period, txt_path in to_process
+        }
+        for future in as_completed(future_to_key):
+            ticker, period = future_to_key[future]
+            try:
+                result = future.result()
+            except Exception:
+                logger.error("Worker failed for %s/%s", ticker, period, exc_info=True)
+                result = None
+            with stats_lock:
+                if result is not None:
+                    stats["analyzed"] += 1
+                else:
+                    stats["failed"] += 1
 
     return stats
 
@@ -554,7 +610,8 @@ def _discover_txt_files(
     recent_quarters: int | None = 1,
 ) -> list[tuple[str, str, str]]:
     """
-    Find Transcript.txt files to analyze.
+    Find Transcript.txt files to analyze, optionally restricted by ticker/scope.
+
     Returns list of (ticker, period, txt_path) tuples.
     """
     results = []
