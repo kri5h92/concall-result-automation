@@ -34,6 +34,7 @@ from period_utils import normalize_recent_quarters
 _CONFIG_DEFAULTS = {
     "tickers": [],
     "models": [],
+    "model_output_aliases": {},
     "phase": "all",
     "all_quarters": False,
     "recent_quarters": 1,
@@ -113,6 +114,7 @@ def watch_mode(
     ticker_names: dict[str, str],
     output_root: str,
     models: list[str] = None,
+    model_output_aliases: dict[str, str] = None,
     recent_quarters: int | None = 1,
     poll_interval: float = 30.0,
     delay: float = 2.0,
@@ -126,6 +128,7 @@ def watch_mode(
     log = logging.getLogger(__name__)
     default_model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
     resolved_models = models if models else [default_model]
+    model_output_aliases = model_output_aliases or {}
 
     log.info("=" * 60)
     log.info("WATCH MODE STARTED")
@@ -174,6 +177,7 @@ def watch_mode(
                         ticker=ticker,
                         company_name=company_name,
                         model_name=model,
+                        output_model_name=model_output_aliases.get(model, model),
                         client=clients[model],
                     )
                     # Delay between API calls (skip after the very last call)
@@ -236,6 +240,10 @@ def main():
         return
 
     models = cfg["models"] or [os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)]
+    model_output_aliases = cfg.get("model_output_aliases") or {}
+    if not isinstance(model_output_aliases, dict):
+        log.warning("Ignoring model_output_aliases because it is not a mapping.")
+        model_output_aliases = {}
     ticker_names = {t: all_ticker_info.get(t, {}).get("company_name", t) for t in ticker_list}
     output_root = os.path.join(os.getcwd(), "Outputs", "Concalls")
     recent_quarters = _resolve_recent_quarters(cfg)
@@ -247,6 +255,7 @@ def main():
             ticker_names=ticker_names,
             output_root=output_root,
             models=models,
+            model_output_aliases=model_output_aliases,
             recent_quarters=recent_quarters,
             poll_interval=cfg["poll_interval"],
             delay=cfg["api_delay"],
@@ -288,6 +297,7 @@ def main():
                 ticker_info=ticker_names,
                 recent_quarters=recent_quarters,
                 model_name=model,
+                output_model_name=model_output_aliases.get(model, model),
                 delay=cfg["api_delay"],
             )
             log.info("Analysis stats [%s]: %s", model, analyze_stats)

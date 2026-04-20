@@ -4,6 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 import urllib3
 from datetime import datetime
+import time
 
 from period_utils import select_recent_period_items
 
@@ -236,6 +237,7 @@ def run_downloader(tickers: list[str] = None, recent_quarters: int | None = 1):
         return
     for ticker in tickers:
         scrape_ticker(ticker, recent_quarters=recent_quarters)
+        time.sleep(1)  # polite delay between requests
 
 
 # -----------------------------------

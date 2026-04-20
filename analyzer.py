@@ -251,19 +251,23 @@ def analyze_transcript(
     ticker: str,
     company_name: str,
     model_name: str = None,
+    output_model_name: str = None,
     client=None,
 ) -> dict | None:
     """
     Analyze a single transcript text file using the configured LLM provider.
     Returns the parsed analysis dict, or None on failure.
-    Saves analysis_{model_slug}.json alongside the transcript.
+    Saves analysis_{model_slug}.json alongside the transcript. output_model_name
+    can key compatible model versions under the same output file.
     """
     if model_name is None:
         model_name = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
+    if output_model_name is None:
+        output_model_name = model_name
 
     provider = _detect_provider(model_name)
     folder = os.path.dirname(txt_path)
-    slug = _model_to_slug(model_name)
+    slug = _model_to_slug(output_model_name)
     json_path = os.path.join(folder, f"analysis_{slug}.json")
 
     # Idempotency: skip if already analyzed with this model
@@ -460,6 +464,7 @@ def analyze_batch(
     ticker_info: dict[str, str] = None,
     recent_quarters: int | None = 1,
     model_name: str = None,
+    output_model_name: str = None,
     delay: float = 2.0,
 ) -> dict:
     """
@@ -471,7 +476,9 @@ def analyze_batch(
         ticker_info: Dict mapping ticker -> company_name. Required for new analyses.
         recent_quarters: Number of most recent transcript periods to analyze per ticker.
             None means analyze all available periods.
-        model_name: Gemini model to use.
+        model_name: Model to call.
+        output_model_name: Model name used for result filenames/idempotency.
+            Use this when a newer compatible model should reuse older outputs.
         delay: Seconds to wait between API calls.
 
     Returns:
@@ -486,8 +493,9 @@ def analyze_batch(
 
     # Resolve model name first (needed for provider detection and idempotency check)
     resolved_model = model_name or os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
-    resolved_slug = _model_to_slug(resolved_model)
-    client = _get_client(resolved_model)
+    resolved_output_model = output_model_name or resolved_model
+    resolved_slug = _model_to_slug(resolved_output_model)
+    client = None
 
     # Discover all txt files to process
     txt_files = _discover_txt_files(output_root, tickers, recent_quarters=recent_quarters)
@@ -496,7 +504,13 @@ def analyze_batch(
         logger.warning("No transcript text files found to analyze.")
         return stats
 
-    logger.info("Analyzing %d transcript(s) with [%s]...", len(txt_files), resolved_model)
+    if resolved_output_model != resolved_model:
+        logger.info(
+            "Analyzing %d transcript(s) with [%s] (results keyed as [%s])...",
+            len(txt_files), resolved_model, resolved_output_model,
+        )
+    else:
+        logger.info("Analyzing %d transcript(s) with [%s]...", len(txt_files), resolved_model)
 
     for i, (ticker, period, txt_path) in enumerate(txt_files):
         json_path = os.path.join(os.path.dirname(txt_path), f"analysis_{resolved_slug}.json")
@@ -505,17 +519,20 @@ def analyze_batch(
             stats["skipped"] += 1
             logger.debug(
                 "[%d/%d] Skipping %s/%s — already analyzed by %s",
-                i + 1, len(txt_files), ticker, period, resolved_model,
+                i + 1, len(txt_files), ticker, period, resolved_output_model,
             )
             continue
 
         company_name = ticker_info.get(ticker, ticker)
+        if client is None:
+            client = _get_client(resolved_model)
 
         result = analyze_transcript(
             txt_path=txt_path,
             ticker=ticker,
             company_name=company_name,
-            model_name=model_name,
+            model_name=resolved_model,
+            output_model_name=resolved_output_model,
             client=client,
         )
 

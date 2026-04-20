@@ -120,6 +120,34 @@ def _normalize_analysis_record(data: dict) -> dict:
     return normalized
 
 
+def _normalize_company_suffixes(name: str) -> str:
+    """Normalize common company suffix variants used by generated JSON."""
+    text = _clean_text(name)
+    text = _re.sub(r"\bLtd\.?\b", "Limited", text, flags=_re.IGNORECASE)
+    return text
+
+
+def _canonical_company_name(ticker: str, data: dict, meta: dict) -> str:
+    """Use ticker metadata as the display/grouping source, with JSON fallback."""
+    meta_name = _clean_text(meta.get("company_name", ""))
+    if meta_name:
+        return meta_name
+
+    json_name = _clean_text(data.get("company_name", ""))
+    if json_name:
+        return _normalize_company_suffixes(json_name)
+
+    return ticker
+
+
+def _analysis_file_sort_key(path: str) -> tuple[float, str]:
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = 0
+    return mtime, os.path.basename(path)
+
+
 @st.cache_data
 def load_ticker_metadata(csv_path: str) -> dict[str, dict]:
     """Load tickers.csv into a dict: {ticker: {company_name, sector, sub_sector}}."""
@@ -142,7 +170,7 @@ def load_ticker_metadata(csv_path: str) -> dict[str, dict]:
 def load_all_analyses(output_root: str, ticker_meta: dict[str, dict]) -> pd.DataFrame:
     """
     Walk Outputs/Concalls/ and load all analysis_*.json files into a DataFrame.
-    Also loads legacy analysis.json files (tagged model='unknown').
+    Also loads legacy analysis.json files.
     Merges sector/sub_sector from ticker metadata.
     """
     records = []
@@ -160,42 +188,49 @@ def load_all_analyses(output_root: str, ticker_meta: dict[str, dict]) -> pd.Data
             if not os.path.isdir(period_path):
                 continue
 
-            # Collect all analysis JSON files in this folder
-            json_files = []
+            analysis_paths = []
             for fname in os.listdir(period_path):
-                if fname == "analysis.json":
-                    # Legacy file — model unknown
-                    json_files.append((os.path.join(period_path, fname), "unknown"))
-                elif fname.startswith("analysis_") and fname.endswith(".json"):
-                    # Model-specific file — extract slug from filename
-                    model_slug = fname[len("analysis_"):-len(".json")]
-                    json_files.append((os.path.join(period_path, fname), model_slug))
+                if fname == "analysis.json" or (
+                    fname.startswith("analysis_") and fname.endswith(".json")
+                ):
+                    analysis_paths.append(os.path.join(period_path, fname))
 
-            for json_path, model_slug in json_files:
+            if not analysis_paths:
+                continue
+
+            data = None
+            selected_json_path = None
+            for json_path in sorted(analysis_paths, key=_analysis_file_sort_key, reverse=True):
                 try:
                     with open(json_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
                 except (json.JSONDecodeError, OSError):
                     continue
+                selected_json_path = json_path
+                break
 
-                data = _normalize_analysis_record(data)
+            if data is None or selected_json_path is None:
+                continue
 
-                # Convert key_quotes list to bullet points for display
-                kq = data.get("key_quotes", [])
-                if isinstance(kq, list):
-                    data["key_quotes"] = kq  # keep as list; rendered by _render_section
+            data = _normalize_analysis_record(data)
 
-                # analyst_take stays as dict if returned that way
+            # Convert key_quotes list to bullet points for display
+            kq = data.get("key_quotes", [])
+            if isinstance(kq, list):
+                data["key_quotes"] = kq  # keep as list; rendered by _render_section
 
-                # Add metadata
-                meta = ticker_meta.get(ticker_name, {})
-                data["sector"] = meta.get("sector", "Unknown")
-                data["sub_sector"] = meta.get("sub_sector", "Unknown")
-                data["_ticker_folder"] = ticker_name
-                data["_period_folder"] = period_name
-                data["_model"] = model_slug
+            # analyst_take stays as dict if returned that way
 
-                records.append(data)
+            # Add metadata
+            meta = ticker_meta.get(ticker_name, {})
+            data["company_name"] = _canonical_company_name(ticker_name, data, meta)
+            data["sector"] = meta.get("sector", "Unknown")
+            data["sub_sector"] = meta.get("sub_sector", "Unknown")
+            data["_ticker_folder"] = ticker_name
+            data["_period_folder"] = period_name
+            data["_analysis_mtime"] = _analysis_file_sort_key(selected_json_path)[0]
+
+            records.append(data)
 
     if not records:
         return pd.DataFrame()
@@ -239,6 +274,11 @@ def main():
         )
         return
 
+    df["_period_start"] = df["_period_folder"].map(_period_month_start)
+    df["_period_end"] = df["_period_folder"].map(_period_month_end)
+    df["_quarter_label"] = df["_period_folder"].map(_period_quarter_label)
+    df["_quarter_sort"] = df["_period_folder"].map(_period_quarter_sort)
+
     # --- SIDEBAR FILTERS ---
     with st.sidebar:
         # Sector filter
@@ -253,41 +293,70 @@ def main():
 
         # df_filtered = df_filtered[df_filtered["sub_sector"].isin(selected_sub_sectors)]
 
+        # Date range filter: find companies with any concall month overlapping the range.
+        # Once matched, keep all available quarters/files for those companies visible.
+        valid_period_df = df.dropna(subset=["_period_start", "_period_end"])
+        if valid_period_df.empty:
+            df_date_scope = df
+            st.caption("Date range filter unavailable because period folders could not be parsed.")
+        else:
+            min_period_date = min(valid_period_df["_period_start"])
+            max_period_date = max(valid_period_df["_period_end"])
+            range_start = st.date_input(
+                "Start date",
+                value=min_period_date,
+                help=(
+                    "Matches companies with at least one concall month overlapping this range."
+                ),
+            )
+            range_end = st.date_input(
+                "End date",
+                value=max_period_date,
+                help=(
+                    "The range selects companies only; all available quarters for matched companies are shown."
+                ),
+            )
+            range_start, range_end = _normalize_date_bounds(range_start, range_end)
+            range_mask = (
+                (valid_period_df["_period_start"] <= range_end)
+                & (valid_period_df["_period_end"] >= range_start)
+            )
+            matched_tickers = set(valid_period_df.loc[range_mask, "_ticker_folder"])
+            df_date_scope = df[df["_ticker_folder"].isin(matched_tickers)]
+            st.caption(
+                f"{df_date_scope['_ticker_folder'].nunique()} company(ies) matched; "
+                "showing all available quarters for selected companies."
+            )
+
         # Company filter
-        companies = sorted(df["company_name"].unique())
+        companies = sorted(df_date_scope["company_name"].unique())
         selected_companies = st.multiselect("Company", companies, default=companies)
 
-        df_filtered = df[df["company_name"].isin(selected_companies)]
+        df_filtered = df_date_scope[df_date_scope["company_name"].isin(selected_companies)]
 
         # Quarter filter
-        periods = sorted(df_filtered["_period_folder"].unique(), key=_period_sort_key, reverse=True)
-        selected_periods = st.multiselect("Quarter", periods, default=periods)
+        quarters = _sorted_quarter_labels(df_filtered)
+        selected_quarters = st.multiselect("Quarter", quarters, default=quarters)
 
-        df_filtered = df_filtered[df_filtered["_period_folder"].isin(selected_periods)]
-
-        # Model filter
-        available_models = sorted(df_filtered["_model"].unique())
-        selected_models = st.multiselect("Model", available_models, default=available_models)
-
-        df_filtered = df_filtered[df_filtered["_model"].isin(selected_models)]
+        df_filtered = df_filtered[df_filtered["_quarter_label"].isin(selected_quarters)]
+        df_filtered = _collapse_quarter_records(df_filtered)
 
     if df_filtered.empty:
         st.info("No data matches the current filters.")
         return
 
     n_companies = df_filtered["company_name"].nunique()
-    n_periods = df_filtered["_period_folder"].nunique()
-    n_models = df_filtered["_model"].nunique()
+    n_quarters = df_filtered["_quarter_label"].nunique()
 
-    st.caption(f"Showing {len(df_filtered)} result(s) — {n_companies} company(ies) × {n_periods} quarter(s) × {n_models} model(s)")
+    st.caption(
+        f"Showing {len(df_filtered)} result(s) — "
+        f"{n_companies} company(ies) × {n_quarters} quarter(s)"
+    )
 
     # --- VIEW MODES ---
-    if n_companies == 1 and n_periods == 1 and n_models > 1:
-        # Best case for model comparison
-        _render_model_comparison(df_filtered)
-    elif n_companies == 1 and n_periods > 1:
+    if n_companies == 1 and n_quarters > 1:
         _render_single_company_multi_quarter(df_filtered)
-    elif n_companies > 1 and n_periods == 1:
+    elif n_companies > 1 and n_quarters == 1:
         _render_multi_company_single_quarter(df_filtered)
     else:
         _render_flat_table(df_filtered)
@@ -297,134 +366,6 @@ def main():
 # VIEW RENDERERS
 # -----------------------------------
 
-
-def _parse_items(text: str) -> list[str]:
-    """Split a text blob into individual label-value items."""
-    text = text.strip()
-
-    # Already newline-separated
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if len(lines) > 1:
-        return lines
-
-    # Pipe-separated items (most recent model format): "Label: 'quote' | Label: 'quote'"
-    if " | " in text:
-        parts = [p.strip() for p in text.split(" | ") if p.strip()]
-        if len(parts) > 1:
-            return parts
-
-    # Numbered items inline: "1. content 2. content" — max 2 digits to avoid matching "INR 500. "
-    parts = _re.split(r'(?<!\w)(\d{1,2}[\.\)]\s)', text)
-    if len(parts) > 3:
-        items = []
-        i = 1
-        while i < len(parts) - 1:
-            content = (parts[i] + parts[i + 1]).strip()
-            if content:
-                items.append(content)
-            i += 2
-        if items:
-            return items
-
-    # Non-numbered: split after a closing " before a Capital word
-    #               OR after sentence ". " before a Capital-starting "Label:"
-    items = _re.split(
-        r'(?<=["\u201d])\s+(?=[A-Z])'
-        r'|(?<=\.)\s+(?=[A-Z][^:.\n]{2,60}:)',
-        text,
-    )
-    items = [i.strip() for i in items if i.strip()]
-    return items if len(items) > 1 else [text]
-
-
-def _format_item(text: str) -> str:
-    """Bold descriptor label before ':', render direct quotes as blockquotes."""
-    text = text.strip()
-
-    # Optional leading number "1. " / "1) "
-    num_prefix = ""
-    m_num = _re.match(r'^(\d+[\.\)]\s*)', text)
-    if m_num:
-        num_prefix = m_num.group(1)
-        text = text[m_num.end():]
-
-    # Find label — text before first ": " within 70 chars, no sentence-ending punctuation
-    colon = text.find(": ")
-    if 0 < colon < 70 and not _re.search(r'[.!?]', text[:colon]):
-        label = text[:colon].strip()
-        rest = text[colon + 2:].strip()
-        # Entire rest is a single-quoted verbatim passage → blockquote
-        if rest.startswith("'") and rest.endswith("'") and len(rest) > 15:
-            rest_fmt = f"> {rest[1:-1]}"
-        else:
-            # Inline double-quoted text (≥5 chars) → blockquote
-            rest_fmt = _re.sub(r'"([^"]{5,}?)"', r'\n> "\1"\n', rest).strip()
-        return f"**{num_prefix}{label}**\n{rest_fmt}"
-
-    return f"{num_prefix}{text}" if num_prefix else text
-
-
-def _format_as_list(text: str) -> str:
-    """Backward-compatible wrapper for older call sites."""
-    return _format_as_markdown(text)
-
-
-def _parse_items(text: str) -> list[str]:
-    """Split a text blob into readable display items."""
-    text = _clean_text(text)
-    if not text:
-        return []
-
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if len(lines) > 1:
-        items = []
-        current = []
-        for line in lines:
-            starts_new = bool(
-                _re.match(r"^([-*•]|\d{1,2}[\.\)])\s+", line)
-                or _re.match(r"^[A-Z][^:]{1,70}:\s", line)
-            )
-            if current and starts_new:
-                items.append(" ".join(current).strip())
-                current = [line]
-            else:
-                current.append(line)
-        if current:
-            items.append(" ".join(current).strip())
-        if len(items) > 1:
-            return items
-
-    if " | " in text:
-        parts = [part.strip() for part in text.split(" | ") if part.strip()]
-        if len(parts) > 1:
-            return parts
-
-    numbered = [part.strip() for part in _re.split(r"(?<!\w)(?=\d{1,2}[\.\)]\s)", text) if part.strip()]
-    if len(numbered) > 1:
-        return numbered
-
-    positions = [
-        match.start()
-        for match in _re.finditer(
-            r"(?<!^)(?<!\w)(?=(?:[A-Z][A-Za-z0-9/&'()%-]{1,20}(?: [A-Za-z0-9/&'()%-]{1,20}){0,4}):\s)",
-            text,
-        )
-    ]
-    if positions:
-        parts = []
-        start = 0
-        for pos in positions:
-            part = text[start:pos].strip()
-            if part:
-                parts.append(part)
-            start = pos
-        last = text[start:].strip()
-        if last:
-            parts.append(last)
-        if len(parts) > 1:
-            return parts
-
-    return [text]
 
 
 def _format_quote_blocks(text: str) -> str:
@@ -447,10 +388,18 @@ def _format_quote_blocks(text: str) -> str:
     text = _re.sub(r'(?i)\b(Quote|Quotes|Pipeline)\b\s+"([^"]{5,}?)"', replace_double, text)
     text = _re.sub(r"(?i)\b(Quote|Quotes|Pipeline)\b\s+'([^']{5,}?)'", replace_single, text)
 
-    if text.startswith('"') and text.endswith('"') and len(text) > 10:
-        return f"> {text[1:-1]}"
+    # "long quote" optionally followed by trailing prose
+    leading_q = _re.match(r'^["\u201c]([^"\u201d]{10,})["\u201d]\s*(.*)', text, _re.DOTALL)
+    if leading_q:
+        quoted = leading_q.group(1).strip()
+        trailing = leading_q.group(2).strip()
+        if trailing:
+            return f"> {quoted}\n\n{trailing}"
+        return f"> {quoted}"
+
     if text.startswith("'") and text.endswith("'") and len(text) > 10:
-        return f"> {text[1:-1]}"
+        if text.count("'") == 2:
+            return f"> {text[1:-1]}"
 
     return text.strip()
 
@@ -462,25 +411,39 @@ def _format_item(text: str) -> str:
         return "_Not disclosed_"
 
     prefix = ""
+    indent = ""
     bullet_match = _re.match(r"^((?:[-*\u2022])\s+|\d{1,2}[\.\)]\s+)", text)
     if bullet_match:
         prefix = bullet_match.group(1)
+        indent = " " * len(prefix)  # indent continuation lines under the list marker
         text = text[bullet_match.end():].strip()
 
     if text.endswith(":") and not _re.search(r"[.!?]", text[:-1]):
-        return f"**{prefix}{text[:-1].strip()}**" if prefix else f"**{text[:-1].strip()}**"
+        return f"{prefix}**{text[:-1].strip()}**"
 
     colon = text.find(": ")
     if 0 < colon < 80 and not _re.search(r"[.!?]", text[:colon]):
         label = text[:colon].strip()
-        rest = _format_quote_blocks(text[colon + 2:].strip()) or "_Not disclosed_"
-        if label.lower() in {"quote", "quotes", "pipeline"} and not rest.startswith(">"):
-            rest = f"> {rest}"
-        return f"**{prefix}{label}**\n{rest}"
+        raw_rest = text[colon + 2:].strip()
+
+        # Special handling for Quote:/Quotes:/Pipeline: labels —
+        # extract ALL quoted strings and render each as its own blockquote.
+        if _re.search(r"\bquotes?\b|\bpipeline\b", label.lower()):
+            all_quotes = _re.findall(r'["\u201c]([^"\u201d]{5,})["\u201d]', raw_rest)
+            if all_quotes:
+                parts = [f"{indent}> {q.strip()}" for q in all_quotes]
+                return f"{prefix}**{label}**\n" + "\n\n".join(parts)
+            return f"{prefix}**{label}**\n{indent}> {raw_rest}"
+
+        rest = _format_quote_blocks(raw_rest) or "_Not disclosed_"
+        # indent blockquote lines so they sit under the list marker
+        if indent and rest.startswith(">"):
+            rest = f"{indent}{rest}"
+        return f"{prefix}**{label}**\n{rest}"
 
     formatted = _format_quote_blocks(text)
     if prefix and formatted.startswith(">"):
-        return f"**{prefix.strip()}**\n{formatted}"
+        return f"{prefix}**{text.split(':')[0].strip() if ':' in text else text[:40].rstrip()}**\n{indent}{formatted}"
     return f"{prefix}{formatted}" if prefix else formatted
 
 
@@ -592,9 +555,9 @@ def _parse_items_safe(text: str) -> list[str]:
         return normalized_parts
 
     positions = [
-        match.start()
-        for match in _re.finditer(
-            r"(?<!^)(?<!\w)(?=(?:[A-Z][A-Za-z0-9/&'()%-]{1,20}(?: [A-Za-z0-9/&'()%-]{1,20}){0,4}):\s)",
+        m.end(1)
+        for m in _re.finditer(
+            r"([.!?]['\"\u2019]?\s+)(?=[A-Z][A-Za-z0-9/&'()%-]{1,25}(?:\s[A-Za-z0-9/&'()%-]{1,25}){0,7}:\s)",
             text,
         )
     ]
@@ -673,65 +636,36 @@ def _render_section(key: str, value) -> None:
     st.markdown(_format_as_markdown(value))
 
 
-def _render_model_comparison(df: pd.DataFrame):
-    """Single company, single quarter, multiple models: columns = models, rows = sections."""
-    company = df["company_name"].iloc[0]
-    ticker = df["_ticker_folder"].iloc[0]
-    period = df["_period_folder"].iloc[0]
-    st.subheader(f"{company} ({ticker}) — {period} — Model Comparison")
-
-    models = sorted(df["_model"].unique())
-
-    for section_key in ANALYSIS_SECTIONS:
-        label = SECTION_LABELS.get(section_key, section_key)
-        with st.expander(label, expanded=True):
-            cols = st.columns(len(models))
-            for i, model in enumerate(models):
-                model_row = df[df["_model"] == model]
-                with cols[i]:
-                    st.markdown(f"**{model}**")
-                    if not model_row.empty:
-                        _render_section(section_key, model_row.iloc[0].get(section_key))
-                    else:
-                        st.caption("_Not analyzed with this model_")
-
-
 def _render_single_company_multi_quarter(df: pd.DataFrame):
     """Single company selected, multiple quarters: columns = quarters, rows = sections."""
     company = df["company_name"].iloc[0]
     ticker = df["_ticker_folder"].iloc[0]
-    model_label = f" [{df['_model'].iloc[0]}]" if df["_model"].nunique() == 1 else ""
-    st.subheader(f"{company} ({ticker}) — Quarter Comparison{model_label}")
+    st.subheader(f"{company} ({ticker}) — Quarter Comparison")
 
-    # Sort periods chronologically; for multi-model, use first row per period
-    df = df.sort_values("_period_folder", key=lambda s: s.map(_period_sort_key))
-    periods = df["_period_folder"].unique().tolist()
+    df = df.sort_values("_quarter_sort")
+    quarters = df["_quarter_label"].unique().tolist()
 
     for section_key in ANALYSIS_SECTIONS:
         label = SECTION_LABELS.get(section_key, section_key)
         with st.expander(label, expanded=False):
-            cols = st.columns(len(periods))
-            for i, period in enumerate(periods):
-                # If multiple models for same period, pick first
-                rows = df[df["_period_folder"] == period]
+            cols = st.columns(len(quarters))
+            for i, quarter in enumerate(quarters):
+                rows = df[df["_quarter_label"] == quarter]
                 row = rows.iloc[0]
                 with cols[i]:
-                    model_tag = f" `{row['_model']}`" if df["_model"].nunique() > 1 else ""
-                    st.markdown(f"**{period}**{model_tag}")
+                    st.markdown(f"**{quarter}**")
                     _render_section(section_key, row.get(section_key))
 
 
 def _render_multi_company_single_quarter(df: pd.DataFrame):
     """Multiple companies, single quarter: one row per company."""
-    period = df["_period_folder"].iloc[0]
-    model_label = f" [{df['_model'].iloc[0]}]" if df["_model"].nunique() == 1 else ""
-    st.subheader(f"Quarter: {period} — Company Comparison{model_label}")
+    quarter = df["_quarter_label"].iloc[0]
+    st.subheader(f"Quarter: {quarter} — Company Comparison")
 
     for _, row in df.sort_values("company_name").iterrows():
         company = row["company_name"]
         ticker = row["_ticker_folder"]
-        model_tag = f" `{row['_model']}`" if df["_model"].nunique() > 1 else ""
-        with st.expander(f"{company} ({ticker}){model_tag}", expanded=True):
+        with st.expander(f"{company} ({ticker})", expanded=True):
             for section_key in ANALYSIS_SECTIONS:
                 label = SECTION_LABELS.get(section_key, section_key)
                 st.markdown(f"**{label}**")
@@ -743,16 +677,14 @@ def _render_flat_table(df: pd.DataFrame):
     """General view: one expander per company+quarter combination."""
     st.subheader("All Results")
 
-    df = df.assign(_period_sort=df["_period_folder"].map(_period_sort_key))
-    df = df.sort_values(["company_name", "_period_sort", "_model"], ascending=[True, False, True])
+    df = df.sort_values(["company_name", "_quarter_sort"], ascending=[True, False])
 
     for _, row in df.iterrows():
         company = row["company_name"]
         ticker = row["_ticker_folder"]
-        period = row["_period_folder"]
-        model = row["_model"]
+        quarter = row["_quarter_label"]
 
-        with st.expander(f"{company} ({ticker}) — {period} — `{model}`", expanded=False):
+        with st.expander(f"{company} ({ticker}) — {quarter}", expanded=False):
             for section_key in ANALYSIS_SECTIONS:
                 label = SECTION_LABELS.get(section_key, section_key)
                 st.markdown(f"**{label}**")
@@ -766,19 +698,129 @@ def _render_flat_table(df: pd.DataFrame):
 
 def _period_sort_key(period_str) -> str:
     """Convert 'Feb 2026' to '2026-02' for chronological sorting."""
-    from datetime import datetime
     if isinstance(period_str, pd.Series):
         return period_str.apply(_period_sort_key_scalar)
     return _period_sort_key_scalar(period_str)
 
 
 def _period_sort_key_scalar(period_str: str) -> str:
+    dt = _parse_period_date(period_str)
+    return dt.strftime("%Y-%m") if dt else "0000-00"
+
+
+def _parse_period_date(period_str: str):
     from datetime import datetime
-    try:
-        dt = datetime.strptime(period_str, "%b %Y")
-        return dt.strftime("%Y-%m")
-    except (ValueError, TypeError):
-        return "0000-00"
+
+    text = _clean_text(period_str)
+    for fmt in ("%b %Y", "%B %Y"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _period_quarter_info(period_str: str):
+    dt = _parse_period_date(period_str)
+    if dt is None:
+        return None
+
+    month = dt.month
+    if month in (7, 8, 9):
+        return 1, dt.year + 1
+    if month in (10, 11, 12):
+        return 2, dt.year + 1
+    if month in (1, 2, 3):
+        return 3, dt.year
+    return 4, dt.year
+
+
+def _period_quarter_label(period_str: str) -> str:
+    info = _period_quarter_info(period_str)
+    if info is None:
+        return _clean_text(period_str) or "Unknown Quarter"
+
+    quarter, fiscal_year = info
+    return f"Q{quarter} FY{fiscal_year % 100:02d}"
+
+
+def _period_quarter_sort(period_str: str) -> int:
+    info = _period_quarter_info(period_str)
+    if info is None:
+        return 0
+
+    quarter, fiscal_year = info
+    return fiscal_year * 10 + quarter
+
+
+def _sorted_quarter_labels(df: pd.DataFrame) -> list[str]:
+    if df.empty:
+        return []
+
+    return (
+        df[["_quarter_label", "_quarter_sort"]]
+        .drop_duplicates()
+        .sort_values("_quarter_sort", ascending=False)["_quarter_label"]
+        .tolist()
+    )
+
+
+def _collapse_quarter_records(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    work = df.copy()
+    period_starts = (
+        work["_period_start"]
+        if "_period_start" in work.columns
+        else pd.Series([None] * len(work), index=work.index)
+    )
+    analysis_mtime = (
+        work["_analysis_mtime"]
+        if "_analysis_mtime" in work.columns
+        else pd.Series([0] * len(work), index=work.index)
+    )
+
+    work["_quarter_record_order"] = period_starts.map(
+        lambda value: value.toordinal() if value else 0
+    )
+    work["_analysis_order"] = pd.to_numeric(analysis_mtime, errors="coerce").fillna(0)
+
+    work = work.sort_values(
+        [
+            "_ticker_folder",
+            "_quarter_label",
+            "_quarter_record_order",
+            "_analysis_order",
+        ],
+        ascending=[True, True, False, False],
+    )
+    work = work.drop_duplicates(["_ticker_folder", "_quarter_label"], keep="first")
+    return work.drop(columns=["_quarter_record_order", "_analysis_order"])
+
+
+def _period_month_start(period_str: str):
+    dt = _parse_period_date(period_str)
+    return dt.date() if dt else None
+
+
+def _period_month_end(period_str: str):
+    from datetime import datetime, timedelta
+    start = _period_month_start(period_str)
+    if start is None:
+        return None
+
+    if start.month == 12:
+        next_month = start.replace(year=start.year + 1, month=1)
+    else:
+        next_month = start.replace(month=start.month + 1)
+    return next_month - timedelta(days=1)
+
+
+def _normalize_date_bounds(start, end):
+    if start > end:
+        start, end = end, start
+    return start, end
 
 
 # -----------------------------------

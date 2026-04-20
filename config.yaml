@@ -13,7 +13,12 @@ tickers:
 # Use "provider/model" format for OpenRouter, or plain name for direct Gemini.
 models:
   # - google/gemini-2.5-flash
-  - anthropic/claude-4.6-opus
+  - anthropic/claude-4.7-opus
+
+# Treat compatible model versions as the same result set on disk.
+# This calls Opus 4.7, but reuses/skips existing Opus 4.6 analysis files.
+model_output_aliases:
+  anthropic/claude-4.7-opus: anthropic/claude-4.6-opus
 
 # Pipeline phase to run: download | extract | analyze | all
 phase: all
