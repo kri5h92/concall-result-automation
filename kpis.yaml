@@ -1,0 +1,524 @@
+# ============================================================
+# Sector / Sub-Sector KPI Definitions
+# ============================================================
+#
+# HOW TO FILL THIS FILE
+# ---------------------
+# For each sub-sector, write two plain-text blocks:
+#
+#   kpis: |
+#     Write one KPI per line starting with a dash.
+#     Each line should say: what the metric is, what unit it's in,
+#     and what specifically to look for in the transcript.
+#     Be as plain and specific as you would be when briefing a junior analyst.
+#
+#   notes: |
+#     Write any nuances, traps, or context that the model should know
+#     about this sub-sector. What do experienced analysts focus on here
+#     that a generic model might miss? What language does management use
+#     that sounds positive but is actually a warning sign?
+#
+# Both fields are injected verbatim into the Opus prompt for that company.
+# There is no special syntax — just plain sentences.
+#
+# FALLBACK ORDER
+# --------------
+# sub-sector kpis → sector _defaults kpis → _defaults kpis
+# If a sub-sector has no kpis defined, the sector default is used.
+# If neither is defined, no KPI block is added to the prompt.
+#
+# ============================================================
+
+# ── GLOBAL DEFAULTS ──────────────────────────────────────────
+# Used when no sector or sub-sector match is found.
+_defaults:
+  kpis: ""
+  notes: ""
+
+
+# ── AGRICULTURE ──────────────────────────────────────────────
+Agriculture:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Micro Irrigation:
+    kpis: ""
+    notes: ""
+
+
+# ── AUTOMOBILE ───────────────────────────────────────────────
+Automobile:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Auto Components:
+    kpis: ""
+    notes: ""
+
+  Auto Components & Power Products:
+    kpis: ""
+    notes: ""
+
+  Auto Dealerships:
+    kpis: ""
+    notes: ""
+
+  Commercial Vehicles:
+    kpis: ""
+    notes: ""
+
+
+# ── CAPITAL GOODS ────────────────────────────────────────────
+Capital Goods:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Aerospace & Defense:
+    kpis: ""
+    notes: ""
+
+  Engineering Products:
+    kpis: ""
+    notes: ""
+
+  Industrial Machinery:
+    kpis: ""
+    notes: ""
+
+  Metal Fabrication:
+    kpis: ""
+    notes: ""
+
+  Power Electronics:
+    kpis: ""
+    notes: ""
+
+  Power Infrastructure Services:
+    kpis: ""
+    notes: ""
+
+  Railway Components:
+    kpis: ""
+    notes: ""
+
+  Solar EPC:
+    kpis: ""
+    notes: ""
+
+  Solar Modules:
+    kpis: ""
+    notes: ""
+
+  Steel Pipes:
+    kpis: ""
+    notes: ""
+
+  Transformer Components:
+    kpis: ""
+    notes: ""
+
+  Transformers:
+    kpis: ""
+    notes: ""
+
+
+# ── CEMENT ───────────────────────────────────────────────────
+Cement:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Building Materials:
+    kpis: ""
+    notes: ""
+
+
+# ── CHEMICALS ────────────────────────────────────────────────
+Chemicals:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Agrochemicals:
+    kpis: ""
+    notes: ""
+
+  Fertilizers:
+    kpis: ""
+    notes: ""
+
+  Fluorochemicals:
+    kpis: ""
+    notes: ""
+
+  Specialty Chemicals:
+    kpis: ""
+    notes: ""
+
+
+# ── CONSUMER DISCRETIONARY ───────────────────────────────────
+Consumer Discretionary:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Electrical Consumer Products:
+    kpis: ""
+    notes: ""
+
+  Jewellery Retail:
+    kpis: ""
+    notes: ""
+
+  Wellness & Salon:
+    kpis: ""
+    notes: ""
+
+
+# ── CONSUMER STAPLES ─────────────────────────────────────────
+Consumer Staples:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Personal Care:
+    kpis: ""
+    notes: ""
+
+  Rice Processing & Exports:
+    kpis: ""
+    notes: ""
+
+  Tobacco:
+    kpis: ""
+    notes: ""
+
+
+# ── DEFENSE ──────────────────────────────────────────────────
+Defense:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Electronics Systems:
+    kpis: ""
+    notes: ""
+
+
+# ── ELECTRONICS ──────────────────────────────────────────────
+Electronics:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Batteries:
+    kpis: ""
+    notes: ""
+
+  Electrical Components:
+    kpis: ""
+    notes: ""
+
+  Electronics Manufacturing Services:
+    kpis: ""
+    notes: ""
+
+
+# ── FINANCIAL SERVICES ───────────────────────────────────────
+Financial Services:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Asset Management:
+    kpis: ""
+    notes: ""
+
+  Digital Investment Platform:
+    kpis: ""
+    notes: ""
+
+  Financial Services:
+    kpis: ""
+    notes: ""
+
+  General Insurance:
+    kpis: ""
+    notes: ""
+
+  Housing Finance:
+    kpis: ""
+    notes: ""
+
+  Investment Company:
+    kpis: ""
+    notes: ""
+
+  Life Insurance:
+    kpis: ""
+    notes: ""
+
+  NBFC:
+    kpis: ""
+    notes: ""
+
+  Power Exchange:
+    kpis: ""
+    notes: ""
+
+  Private Bank:
+    kpis: ""
+    notes: ""
+
+  Public Sector Bank:
+    kpis: ""
+    notes: ""
+
+  Ratings & Research:
+    kpis: ""
+    notes: ""
+
+  Small Finance Bank:
+    kpis: ""
+    notes: ""
+
+  Stock Broking:
+    kpis: ""
+    notes: ""
+
+  Wealth Management:
+    kpis: ""
+    notes: ""
+
+
+# ── HEALTHCARE ───────────────────────────────────────────────
+Healthcare:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Ayurvedic Products:
+    kpis: ""
+    notes: ""
+
+  Hospitals:
+    kpis: ""
+    notes: ""
+
+
+# ── INFRASTRUCTURE ───────────────────────────────────────────
+Infrastructure:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Engineering Services:
+    kpis: ""
+    notes: ""
+
+  Water Infrastructure:
+    kpis: ""
+    notes: ""
+
+
+# ── LOGISTICS ────────────────────────────────────────────────
+Logistics:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Third-Party Logistics:
+    kpis: ""
+    notes: ""
+
+
+# ── MEDIA ────────────────────────────────────────────────────
+Media:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Cable & Broadband:
+    kpis: ""
+    notes: ""
+
+  Music & Entertainment:
+    kpis: ""
+    notes: ""
+
+
+# ── METALS ───────────────────────────────────────────────────
+Metals:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Non-Ferrous Metal Products:
+    kpis: ""
+    notes: ""
+
+  Zinc & Lead:
+    kpis: ""
+    notes: ""
+
+
+# ── OIL & GAS ────────────────────────────────────────────────
+Oil & Gas:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Oilfield Services:
+    kpis: ""
+    notes: ""
+
+  Refineries:
+    kpis: ""
+    notes: ""
+
+
+# ── PACKAGING ────────────────────────────────────────────────
+Packaging:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Laminated Tubes:
+    kpis: ""
+    notes: ""
+
+  Pharma Packaging:
+    kpis: ""
+    notes: ""
+
+
+# ── PRINTING & PACKAGING ─────────────────────────────────────
+Printing & Packaging:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Pre-press Services:
+    kpis: ""
+    notes: ""
+
+
+# ── REAL ESTATE ──────────────────────────────────────────────
+Real Estate:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Real Estate Development:
+    kpis: ""
+    notes: ""
+
+  Residential Real Estate:
+    kpis: ""
+    notes: ""
+
+
+# ── SERVICES ─────────────────────────────────────────────────
+Services:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Executive Search:
+    kpis: ""
+    notes: ""
+
+
+# ── TECHNOLOGY ───────────────────────────────────────────────
+Technology:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  B2B Research Services:
+    kpis: ""
+    notes: ""
+
+  BPM Services:
+    kpis: ""
+    notes: ""
+
+  Cloud Infrastructure:
+    kpis: ""
+    notes: ""
+
+  Design & Engineering Services:
+    kpis: ""
+    notes: ""
+
+  Engineering R&D Services:
+    kpis: ""
+    notes: ""
+
+  Fintech & SaaS:
+    kpis: ""
+    notes: ""
+
+  GIS & Engineering:
+    kpis: ""
+    notes: ""
+
+  IT Services:
+    kpis: ""
+    notes: ""
+
+  Software Products:
+    kpis: ""
+    notes: ""
+
+  Travel SaaS:
+    kpis: ""
+    notes: ""
+
+
+# ── TELECOM ──────────────────────────────────────────────────
+Telecom:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Telecom Equipment:
+    kpis: ""
+    notes: ""
+
+  Telecom Services:
+    kpis: ""
+    notes: ""
+
+
+# ── TEXTILES ─────────────────────────────────────────────────
+Textiles:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Integrated Textiles:
+    kpis: ""
+    notes: ""
+
+  Textiles:
+    kpis: ""
+    notes: ""
+
+
+# ── UTILITIES ────────────────────────────────────────────────
+Utilities:
+  _defaults:
+    kpis: ""
+    notes: ""
+
+  Power Transmission:
+    kpis: ""
+    notes: ""
+
+  Renewable Energy:
+    kpis: ""
+    notes: ""

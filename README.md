@@ -150,6 +150,8 @@ Each model creates a separate `analysis_<model>.json` file unless `model_output_
 | `--models` | config or `GEMINI_MODEL` | Comma-separated model names |
 | `--watch` | off | Poll continuously for new transcripts |
 | `--poll-interval` | config value | Seconds between watch-mode polls |
+| `--download-retries` | config value | Downloader attempts per Screener page/PDF request |
+| `--download-retry-delay` | config value | Seconds to sleep between downloader retries |
 | `--concurrency-delay` | config value | Seconds used to stagger LLM calls |
 
 ---

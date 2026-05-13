@@ -31,6 +31,9 @@ headers = {
     "User-Agent": "Mozilla/5.0"
 }
 
+DEFAULT_RETRIES = 3
+DEFAULT_RETRY_DELAY = 2.0
+
 # -----------------------------------
 # AUTO CREATE OUTPUT + LOG PATHS
 # -----------------------------------
@@ -65,7 +68,51 @@ def write_log(ticker, log_type, message):
 # DOWNLOAD FUNCTION
 # -----------------------------------
 
-def download_file(ticker, url, filepath):
+def _request_with_retries(
+    ticker: str,
+    url: str,
+    log_context: str,
+    retries: int = DEFAULT_RETRIES,
+    retry_delay: float = DEFAULT_RETRY_DELAY,
+    **request_kwargs,
+) -> requests.Response:
+    """GET a URL with bounded retries and sleep between failed attempts."""
+
+    attempts = max(1, int(retries or 1))
+    for attempt in range(1, attempts + 1):
+        try:
+            response = requests.get(url, headers=headers, timeout=30, **request_kwargs)
+            response.raise_for_status()
+            return response
+        except Exception as e:
+            if attempt >= attempts:
+                write_log(
+                    ticker,
+                    "errors",
+                    f"{log_context} failed after {attempts} attempt(s) | URL: {url} | Error: {str(e)}",
+                )
+                raise
+
+            sleep_for = max(0.0, float(retry_delay or 0.0))
+            print(
+                f"{ticker}: {log_context} failed "
+                f"(attempt {attempt}/{attempts}); retrying in {sleep_for:.1f}s"
+            )
+            write_log(
+                ticker,
+                "errors",
+                f"{log_context} failed attempt {attempt}/{attempts} | URL: {url} | Error: {str(e)}",
+            )
+            time.sleep(sleep_for)
+
+
+def download_file(
+    ticker,
+    url,
+    filepath,
+    retries: int = DEFAULT_RETRIES,
+    retry_delay: float = DEFAULT_RETRY_DELAY,
+):
     """Download one PDF unless the target file already exists."""
 
     try:
@@ -75,14 +122,14 @@ def download_file(ticker, url, filepath):
             write_log(ticker, "success", f"Already exists: {filepath}")
             return
 
-        response = requests.get(
+        response = _request_with_retries(
+            ticker,
             url,
-            headers=headers,
+            "Download",
+            retries=retries,
+            retry_delay=retry_delay,
             verify=False,
-            timeout=30
         )
-
-        response.raise_for_status()
 
         with open(filepath, "wb") as f:
             f.write(response.content)
@@ -110,7 +157,12 @@ def download_file(ticker, url, filepath):
 # SCRAPER
 # -----------------------------------
 
-def scrape_ticker(ticker, recent_quarters: int | None = 1):
+def scrape_ticker(
+    ticker,
+    recent_quarters: int | None = 1,
+    retries: int = DEFAULT_RETRIES,
+    retry_delay: float = DEFAULT_RETRY_DELAY,
+):
     """
     Scrape one Screener.in ticker page and download selected transcripts.
 
@@ -126,13 +178,13 @@ def scrape_ticker(ticker, recent_quarters: int | None = 1):
 
     try:
 
-        response = requests.get(
+        response = _request_with_retries(
+            ticker,
             url,
-            headers=headers,
-            timeout=30
+            "Screener page load",
+            retries=retries,
+            retry_delay=retry_delay,
         )
-
-        response.raise_for_status()
 
     except Exception as e:
 
@@ -225,7 +277,13 @@ def scrape_ticker(ticker, recent_quarters: int | None = 1):
 
         filepath = os.path.join(folder, "Transcript.pdf")
 
-        download_file(ticker, pdf_url, filepath)
+        download_file(
+            ticker,
+            pdf_url,
+            filepath,
+            retries=retries,
+            retry_delay=retry_delay,
+        )
 
 
 # -----------------------------------
@@ -249,12 +307,17 @@ def load_tickers(csv_path: str = None) -> list[str]:
     return tickers
 
 
-def run_downloader(tickers: list[str] = None, recent_quarters: int | None = 1):
+def run_downloader(
+    tickers: list[str] = None,
+    recent_quarters: int | None = 1,
+    retries: int = DEFAULT_RETRIES,
+    retry_delay: float = DEFAULT_RETRY_DELAY,
+):
     """
     Download transcripts for a ticker list.
 
-    If tickers is None, symbols are loaded from tickers.csv. A short delay is
-    kept between tickers to avoid hammering Screener.in.
+    If tickers is None, symbols are loaded from tickers.csv. Tickers are
+    processed sequentially with bounded retries for page loads and PDFs.
     """
     if tickers is None:
         tickers = load_tickers()
@@ -262,7 +325,12 @@ def run_downloader(tickers: list[str] = None, recent_quarters: int | None = 1):
         print("No tickers to process.")
         return
     for ticker in tickers:
-        scrape_ticker(ticker, recent_quarters=recent_quarters)
+        scrape_ticker(
+            ticker,
+            recent_quarters=recent_quarters,
+            retries=retries,
+            retry_delay=retry_delay,
+        )
         time.sleep(1)  # polite delay between requests
 
 

@@ -41,6 +41,8 @@ _CONFIG_DEFAULTS = {
     "watch": False,
     "poll_interval": 30.0,
     "api_delay": 2.0,
+    "download_retries": 3,
+    "download_retry_delay": 2.0,
 }
 
 
@@ -129,6 +131,8 @@ def watch_mode(
     recent_quarters: int | None = 1,
     poll_interval: float = 30.0,
     delay: float = 2.0,
+    download_retries: int = 3,
+    download_retry_delay: float = 2.0,
 ):
     """
     Continuously poll for new transcripts and analyze newly discovered files.
@@ -162,7 +166,12 @@ def watch_mode(
         poll += 1
         log.info("--- Poll #%d: downloading + extracting ---", poll)
 
-        run_downloader(tickers=ticker_list, recent_quarters=recent_quarters)
+        run_downloader(
+            tickers=ticker_list,
+            recent_quarters=recent_quarters,
+            retries=download_retries,
+            retry_delay=download_retry_delay,
+        )
         extract_all_transcripts(
             output_root=output_root,
             tickers=ticker_list,
@@ -228,6 +237,8 @@ def main():
     parser.add_argument("--watch",        action="store_true", default=None, help="Watch mode (overrides config)")
     parser.add_argument("--poll-interval",    type=float, default=None, help="Seconds between polls (overrides config)")
     parser.add_argument("--concurrency-delay", type=float, default=None, help="Seconds between API calls (overrides config)")
+    parser.add_argument("--download-retries", type=int, default=None, help="Downloader attempts per page/PDF request (overrides config)")
+    parser.add_argument("--download-retry-delay", type=float, default=None, help="Seconds to sleep between downloader retries (overrides config)")
 
     args = parser.parse_args()
 
@@ -244,6 +255,8 @@ def main():
     if args.watch                   : cfg["watch"]        = True
     if args.poll_interval    is not None: cfg["poll_interval"] = args.poll_interval
     if args.concurrency_delay is not None: cfg["api_delay"]   = args.concurrency_delay
+    if args.download_retries is not None: cfg["download_retries"] = args.download_retries
+    if args.download_retry_delay is not None: cfg["download_retry_delay"] = args.download_retry_delay
 
     # Load ticker metadata
     all_ticker_info = load_ticker_info()
@@ -273,6 +286,8 @@ def main():
             recent_quarters=recent_quarters,
             poll_interval=cfg["poll_interval"],
             delay=cfg["api_delay"],
+            download_retries=cfg["download_retries"],
+            download_retry_delay=cfg["download_retry_delay"],
         )
         return
 
@@ -290,7 +305,12 @@ def main():
 
     if run_phases in ("download", "all"):
         log.info("--- PHASE 1: DOWNLOAD TRANSCRIPTS ---")
-        run_downloader(tickers=ticker_list, recent_quarters=recent_quarters)
+        run_downloader(
+            tickers=ticker_list,
+            recent_quarters=recent_quarters,
+            retries=cfg["download_retries"],
+            retry_delay=cfg["download_retry_delay"],
+        )
         log.info("Download phase complete.")
 
     if run_phases in ("extract", "all"):

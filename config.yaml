@@ -39,5 +39,11 @@ watch: false
 # Seconds between polls in watch mode.
 poll_interval: 30
 
+# Downloader attempts per Screener page/PDF request.
+download_retries: 3
+
+# Seconds to sleep between downloader retry attempts.
+download_retry_delay: 2.0
+
 # Seconds to wait between consecutive LLM API calls (rate-limit safety).
 api_delay: 2.0
